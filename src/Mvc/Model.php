@@ -15,6 +15,7 @@ namespace Shadon\Mvc;
 
 use Phalcon\Di;
 use Phalcon\Mvc\Model as MvcModel;
+use Phalcon\Mvc\Model\ResultsetInterface;
 use Phalcon\Paginator\Adapter\Model as PaginatorModel;
 use Phalcon\Paginator\Factory;
 
@@ -30,6 +31,47 @@ abstract class Model extends MvcModel
         $this->skipAttributes([
             'update_time',
         ]);
+    }
+
+    /**
+     * @param null $parameters
+     *
+     * @return ResultsetInterface
+     */
+    public static function find($parameters = null): ResultsetInterface
+    {
+        try {
+            return parent::find($parameters);
+        } catch (\PDOException $e) {
+            if ('42S22' == $e->getCode()) {
+                $di = Di::getDefault();
+                $modelsMetadata = $di->getShared('modelsMetadata');
+                $modelsMetadata->reset();
+
+                return parent::find($parameters);
+            } else {
+                throw $e;
+            }
+        }
+    }
+
+    /**
+     * save with transaction.
+     *
+     * @param null $data
+     * @param null $whiteList
+     */
+    public function saveWithTransaction(\Phalcon\Mvc\Model\TransactionInterface $transaction, $data = null, $whiteList = null)
+    {
+        $this->setTransaction($transaction);
+        $success = $this->save($data, $whiteList);
+        if (false == $success) {
+            foreach ($this->getMessages() as $message) {
+                $transaction->rollback($message->getMessage());
+            }
+        }
+
+        return $success;
     }
 
     /**
@@ -105,7 +147,7 @@ abstract class Model extends MvcModel
     public function paginationSql(string $sql, int $page = 1, int $limit = 10): array
     {
         $start = ($page - 1) * $limit;
-        $count = count($this->getReadConnection()->fetchAll($sql));
+        $count = \count($this->getReadConnection()->fetchAll($sql));
         $sql .= " limit $start,$limit ";
         $data = $this->getReadConnection()->fetchAll($sql);
         if (empty($data)) {
@@ -139,7 +181,7 @@ abstract class Model extends MvcModel
      */
     public static function getField(string $field = 'base', string $alias = null): string
     {
-        $stringField = get_called_class()::FIELD_SCOPE[$field] ?? $field;
+        $stringField = \get_called_class()::FIELD_SCOPE[$field] ?? $field;
         if ($stringField && $alias) {
             $data = explode(',', $stringField);
             foreach ($data as $key => $val) {
@@ -169,7 +211,7 @@ abstract class Model extends MvcModel
         if (empty($data)) {
             return [];
         }
-        if (is_array($data)) {
+        if (\is_array($data)) {
             foreach ($data as $key => $value) {
                 $key = preg_replace_callback('/(_)([a-z])/i', function ($matches) use (&$data,&$key) {
                     unset($data[$key]);
@@ -177,7 +219,7 @@ abstract class Model extends MvcModel
                     return ucfirst($matches[2]);
                 }, $key);
                 $temp[$key] = $value;
-                if (is_array($value)) {
+                if (\is_array($value)) {
                     $temp[$key] = self::arrayToHump($value);
                 }
             }
@@ -238,7 +280,7 @@ abstract class Model extends MvcModel
      */
     public function iupdate(array $data = null, $whiteList = null)
     {
-        if (count($data) > 0) {
+        if (\count($data) > 0) {
             //获取当前模型驿应的数据表所有字段
             $attributes = $this->getModelsMetaData()->getAttributes($this);
             //取所有字段和需要更新的数据字段的差集，并过滤
@@ -276,7 +318,7 @@ abstract class Model extends MvcModel
 
         $setSql = rtrim($setSql, ',');
         $whereSql = rtrim($whereSql, ' AND ');
-        $sql = 'UPDATE '.$tableName.' SET '.$setSql.' WHERE '.$whereSql;
+        $sql = 'UPDATE `'.$tableName.'` SET '.$setSql.' WHERE '.$whereSql;
         $this->getDI()->get('dbMaster')->execute($sql);
 
         return (int) $this->getWriteConnection()->affectedRows();
@@ -311,7 +353,7 @@ abstract class Model extends MvcModel
         $idStr = implode(',', $ids);
         $tableName = $this->getSource();
         $setSql = rtrim($setSql, ',');
-        $sql = 'UPDATE '.$tableName.' SET '.$setSql.' WHERE '.$this->pk.' IN ('.$idStr.')';
+        $sql = 'UPDATE `'.$tableName.'` SET '.$setSql.' WHERE '.$this->pk.' IN ('.$idStr.')';
         $this->getWriteConnection()->execute($sql);
 
         return (int) $this->getWriteConnection()->affectedRows();
@@ -339,7 +381,7 @@ abstract class Model extends MvcModel
         }
         $idStr = implode(',', $ids);
         $tableName = $this->getSource();
-        $sql = 'DELETE FROM '.$tableName.' WHERE '.$this->pk.' IN ('.$idStr.')';
+        $sql = 'DELETE FROM `'.$tableName.'` WHERE '.$this->pk.' IN ('.$idStr.')';
         $this->getWriteConnection()->execute($sql);
 
         return (int) $this->getWriteConnection()->affectedRows();
