@@ -67,7 +67,7 @@ class ServiceApplication
         } else {
             $arrayConfig['requestTime'] = microtime(true);
         }
-        define('APP', [
+        \define('APP', [
             'env'      => $appEnv,
             'key'      => $appKey,
             'timezone' => $arrayConfig['timezone'],
@@ -114,8 +114,8 @@ class ServiceApplication
         try {
             $this->application->handle($uri);
         } catch (LogicException $e) {
-            $response->setHeader('returnType', get_class($e));
-            $content = ['error' => $e->getMessage(), 'returnType' => get_class($e)];
+            $response->setHeader('returnType', \get_class($e));
+            $content = ['error' => $e->getMessage(), 'returnType' => \get_class($e)];
             if (method_exists($e, 'getContext')) {
                 $content['context'] = $e->getContext();
             }
@@ -149,24 +149,42 @@ class ServiceApplication
         $eventsManager = $this->di->getShared('eventsManager');
         $eventsManager->attach('dispatch:afterDispatchLoop', function (Event $event, Dispatcher $dispatcher): void {
             $returnedValue = $dispatcher->getReturnedValue();
+            /* @var \Phalcon\Http\Response $response */
             $response = $this->di->getShared('response');
-            if (is_object($returnedValue)) {
-                $response->setHeader('returnType', get_class($returnedValue));
-                if ($returnedValue instanceof \JsonSerializable) {
-                    $response->setJsonContent(['data' => $returnedValue, 'returnType' => get_class($returnedValue)]);
-                }
-            } elseif (is_array($returnedValue)) {
-                $response->setHeader('returnType', 'array');
-                $response->setJsonContent(['data' => $returnedValue, 'returnType' => 'array']);
+            if (\is_object($returnedValue)) {
+                $returnTypeName = \get_class($returnedValue);
+                $returnedValue = (array) $returnedValue;
+            } elseif (\is_array($returnedValue)) {
+                $returnTypeName = 'array';
             } elseif (is_scalar($returnedValue)) {
-                $response->setHeader('returnType', gettype($returnedValue));
-                $response->setJsonContent(
-                    ['data' => $returnedValue, 'returnType' => gettype($returnedValue)]
-                );
-                if (is_string($returnedValue)) {
-                    $dispatcher->setReturnedValue($response->getContent());
-                }
+                /* @var \ReflectionMethod $classMethod */
+                $classMethod = $dispatcher->getDispatchMethod();
+                $returnType = $classMethod->getReturnType();
+                $returnTypeName = null === $returnType ? \gettype($returnedValue) : $returnType->getName();
+                $returnTypeName = 'void' == $returnTypeName ? 'null' : $returnTypeName;
+                \settype($returnedValue, $returnTypeName);
+                $dispatcher->setReturnedValue($response->getContent());
+            } elseif (null === $returnedValue && empty($response->getContent())) {
+                $returnTypeName = 'null';
             }
+            // todo remove
+            /* @var \Shadon\Http\ServiceRequest $request */
+            $request = $this->di->getShared('request');
+            $serializer = $request->getHeader('Serializer-Type');
+            if (\is_array($returnedValue) && 'json/ios' == $serializer) {
+                array_walk_recursive($returnedValue, function (&$value): void {
+                    if (\is_bool($value)) {
+                        $value = $value ? 'true' : 'false';
+                    } elseif (null === $value) {
+                        $value = 'null';
+                    } elseif (is_scalar($value)) {
+                        $value = (string) $value;
+                    }
+                });
+            }
+
+            $response->setHeader('returnType', $returnTypeName);
+            $response->setJsonContent(['data' => $returnedValue, 'returnType' => $returnTypeName]);
         });
         $eventsManager->attach('router:afterCheckRoutes', function (Event $event, Router $router): void {
             /* @var \Shadon\Http\ServiceRequest $request */
