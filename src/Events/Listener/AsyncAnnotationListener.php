@@ -15,6 +15,7 @@ namespace Shadon\Events\Listener;
 
 use Phalcon\Events\Event;
 use Phalcon\Mvc\Dispatcher;
+use PhpAmqpLib\Exception\AMQPTimeoutException;
 
 /**
  * async annotation listener.
@@ -45,17 +46,21 @@ class AsyncAnnotationListener extends AbstractListener
             $dispatcher->getActiveMethod()
         );
         if ($annotations->has(self::ANNOTATIONS_NAME)) {
+            try {
+                /* @var \Shadon\Queue\Adapter\Producer $producer */
+                $producer = $this->queueFactory->createProducer();
+            } catch (AMQPTimeoutException | \ErrorException $e) {
+                return true;
+            }
             $annotation = $annotations->get(self::ANNOTATIONS_NAME);
-            $msgBody = [
-                'class'   => $dispatcher->getControllerClass(),
-                'method'  => $dispatcher->getActiveMethod(),
-                'params'  => $dispatcher->getParams(),
-                'time'    => microtime(true),
-            ];
-            $producer = $this->queueFactory->createProducer();
-            $producer->setExchangeOptions(['name' => $dispatcher->getModuleName(), 'type' => 'topic']);
             $routingKey = $annotation->getNamedParameter('route') ?? 'default_routing_key';
-            $producer->publish(json_encode($msgBody), $routingKey);
+            $producer->publishJob(
+                $dispatcher->getModuleName(),
+                $dispatcher->getControllerClass(),
+                $dispatcher->getActiveMethod(),
+                $dispatcher->getParams(),
+                $routingKey
+            );
             if ($event->isCancelable()) {
                 $event->stop();
             }

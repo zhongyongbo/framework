@@ -16,6 +16,7 @@ namespace Shadon\Application;
 use Composer\Autoload\ClassLoader;
 use League\OAuth2\Server\Exception\OAuthServerException;
 use LogicException;
+use MongoDB\BSON\ObjectId;
 use Phalcon\Config;
 use Phalcon\Dispatcher;
 use Phalcon\Events\Event;
@@ -68,10 +69,11 @@ class ServiceApplication
             $arrayConfig['requestTime'] = microtime(true);
         }
         \define('APP', [
-            'env'      => $appEnv,
-            'key'      => $appKey,
-            'timezone' => $arrayConfig['timezone'],
-            'appname'  => $arrayConfig['appName'],
+            'env'       => $appEnv,
+            'key'       => $appKey,
+            'timezone'  => $arrayConfig['timezone'],
+            'appname'   => $arrayConfig['appName'],
+            'requestId' => (string) new ObjectId(),
         ]);
         ApplicationConst::appendRuntimeEnv(ApplicationConst::RUNTIME_ENV_FPM | ApplicationConst::RUNTIME_ENV_SERVICE);
         $this->di->setShared('config', new Config($arrayConfig));
@@ -95,9 +97,10 @@ class ServiceApplication
             $this->di->getShared($bundle)->register();
         }
         $modules = [];
+        $router = $this->di->getShared('router');
         foreach ($this->di->getShared('config')->moduleList as $moduleName) {
             $namespace = ucfirst($moduleName);
-            $this->di->getShared('router')->addPost('/'.$moduleName.'/:controller/:action', [
+            $router->addPost('/'.$moduleName.'/:controller/:action', [
                 'namespace'  => $namespace.'\\Logic',
                 'module'     => $moduleName,
                 'controller' => 1,
@@ -131,6 +134,9 @@ class ServiceApplication
                 'hint'    => $e->getHint(),
             ]);
         }
+        if (isset($e)) {
+            $this->di->getShared('eventsManager')->fire('application:beforeSendResponse', $this->application, $response);
+        }
 
         return $response;
     }
@@ -153,7 +159,11 @@ class ServiceApplication
             $response = $this->di->getShared('response');
             if (\is_object($returnedValue)) {
                 $returnTypeName = \get_class($returnedValue);
-                $returnedValue = (array) $returnedValue;
+                if ($returnedValue instanceof \JsonSerializable) {
+                    $returnedValue = (array) $returnedValue;
+                } else {
+                    return;
+                }
             } elseif (\is_array($returnedValue)) {
                 $returnTypeName = 'array';
             } elseif (is_scalar($returnedValue)) {
@@ -171,8 +181,9 @@ class ServiceApplication
             /* @var \Shadon\Http\ServiceRequest $request */
             $request = $this->di->getShared('request');
             $serializer = $request->getHeader('Serializer-Type');
-            if (\is_array($returnedValue) && 'json/ios' == $serializer) {
-                array_walk_recursive($returnedValue, function (&$value): void {
+            $jsonContent = ['data' => $returnedValue, 'returnType' => $returnTypeName];
+            if ('json/ios' == $serializer) {
+                array_walk_recursive($jsonContent, function (&$value): void {
                     if (\is_bool($value)) {
                         $value = $value ? 'true' : 'false';
                     } elseif (null === $value) {
@@ -182,9 +193,8 @@ class ServiceApplication
                     }
                 });
             }
-
             $response->setHeader('returnType', $returnTypeName);
-            $response->setJsonContent(['data' => $returnedValue, 'returnType' => $returnTypeName]);
+            $response->setJsonContent($jsonContent);
         });
         $eventsManager->attach('router:afterCheckRoutes', function (Event $event, Router $router): void {
             /* @var \Shadon\Http\ServiceRequest $request */
