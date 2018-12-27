@@ -176,6 +176,8 @@ class ServiceApplication
                 $dispatcher->setReturnedValue($response->getContent());
             } elseif (null === $returnedValue && empty($response->getContent())) {
                 $returnTypeName = 'null';
+            } else {
+                return;
             }
             // todo remove
             /* @var \Shadon\Http\ServiceRequest $request */
