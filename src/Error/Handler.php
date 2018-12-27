@@ -16,11 +16,9 @@ namespace Shadon\Error;
 use ErrorException;
 use Monolog\Handler\AbstractHandler;
 use Monolog\Logger;
-use Monolog\Processor\WebProcessor;
 use Phalcon\Di\Injectable;
 use Psr\Log\LogLevel;
 use Shadon\Application\ApplicationConst;
-use Shadon\Logger\Handler\DingDingHandler;
 use Throwable;
 
 /**
@@ -87,11 +85,8 @@ class Handler extends Injectable
     {
         if (null === $this->logger) {
             $di = $this->getDI();
-            $this->logger = $di->get('logger');
-            $config = $di->getShared('config');
-            $this->logger->pushHandler(new DingDingHandler($config['dingding']));
-            $this->logger->pushHandler($di->getShared('errorViewHandler'));
-            $this->logger->pushProcessor(new WebProcessor(null, ['url']));
+            $this->logger = $di->getShared('errorLogger');
+            $di->has('errorViewHandler') && $this->logger->pushHandler($di->getShared('errorViewHandler'));
         }
 
         return $this->logger;
@@ -131,10 +126,10 @@ class Handler extends Injectable
         if ('UTF-8' != $encode) {
             $message = mb_convert_encoding($message, 'UTF-8', $encode);
         }
-        $this->getLogger()->log($level, 'Uncaught Exception: '.get_class($e), [
+        $this->getLogger()->log($level, 'Uncaught Exception: '.\get_class($e), [
             'code'          => $e->getCode(),
             'message'       => $message,
-            'class'         => get_class($e),
+            'class'         => \get_class($e),
             'file'          => $e->getFile(),
             'line'          => $e->getLine(),
             'traceAsString' => $e->getTraceAsString(),
@@ -146,7 +141,7 @@ class Handler extends Injectable
         chdir($currPath);
         $this->reservedMemory = null;
         $lastError = error_get_last();
-        if ($lastError && in_array($lastError['type'], self::FATAL_ERRORS, true)) {
+        if ($lastError && \in_array($lastError['type'], self::FATAL_ERRORS, true)) {
             $logger = $this->getLogger();
             $logger->log(
                 LogLevel::ALERT,
